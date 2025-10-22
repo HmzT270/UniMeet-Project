@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;              // <-- StatusCodes için
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
@@ -21,7 +22,7 @@ namespace UniMeetApi.Controllers
             DateTime? EndAt,
             int Quota,
             int ClubId,
-            string? ClubName,   // navigation olmadan subquery ile dolduruyoruz
+            string? ClubName,
             string? Description,
             bool IsCancelled
         );
@@ -54,12 +55,18 @@ namespace UniMeetApi.Controllers
             return int.TryParse(id, out var uid) ? uid : null;
         }
 
+        private static bool IsAdmin(User u) => u.Role == UserRole.Admin;
+        private static bool IsManager(User u) => u.Role == UserRole.Manager;
+
+        // Manager sadece kendi kulübü için işlem yapabilir (Create/Update/Delete)
+        private static bool ManagerOwnsClub(User u, int clubId)
+            => IsManager(u) && u.ManagedClubId.HasValue && u.ManagedClubId.Value == clubId;
+
         // === Everyone can view ===
         [HttpGet]
         [AllowAnonymous]
         public async Task<ActionResult<List<EventDto>>> GetAll([FromQuery] bool includeCancelled = false)
         {
-            // ClubName'ı navigation olmadan subquery ile çekiyoruz
             var query = _db.Events.AsNoTracking();
 
             if (!includeCancelled)
@@ -75,10 +82,7 @@ namespace UniMeetApi.Controllers
                     e.EndAt,
                     e.Quota,
                     e.ClubId,
-                    _db.Clubs
-                        .Where(c => c.ClubId == e.ClubId)
-                        .Select(c => (string?)c.Name)
-                        .FirstOrDefault(), // yoksa null döner
+                    _db.Clubs.Where(c => c.ClubId == e.ClubId).Select(c => (string?)c.Name).FirstOrDefault(),
                     e.Description,
                     e.IsCancelled
                 ))
@@ -129,9 +133,16 @@ namespace UniMeetApi.Controllers
             if (req.EndAt.HasValue && req.EndAt.Value < req.StartAt)
                 return BadRequest("Bitiş, başlangıçtan önce olamaz.");
 
-            var creatorId = GetCurrentUserId();
-            if (creatorId is null)
-                return Unauthorized("Kullanıcı bilgisi alınamadı.");
+            var userId = GetCurrentUserId();
+            if (userId is null) return Unauthorized("Kullanıcı bilgisi alınamadı.");
+
+            var user = await _db.Users.FirstOrDefaultAsync(u => u.UserId == userId.Value);
+            if (user is null || !user.IsActive) return Unauthorized("Kullanıcı bulunamadı veya pasif.");
+
+            // ✅ Admin serbest; Manager yalnızca kendi kulübü için
+            if (!IsAdmin(user) && !ManagerOwnsClub(user, req.ClubId))
+                return StatusCode(StatusCodes.Status403Forbidden,
+                    "Bu kulüp için etkinlik oluşturma yetkiniz yok.");
 
             var entity = new Event
             {
@@ -143,14 +154,13 @@ namespace UniMeetApi.Controllers
                 ClubId = req.ClubId,
                 Description = string.IsNullOrWhiteSpace(req.Description) ? null : req.Description.Trim(),
                 IsCancelled = false,
-                CreatedByUserId = creatorId.Value,
+                CreatedByUserId = user.UserId,
                 CreatedAt = DateTime.UtcNow
             };
 
             _db.Events.Add(entity);
             await _db.SaveChangesAsync();
 
-            // ClubName'ı subquery ile doldur
             var clubName = await _db.Clubs
                 .Where(c => c.ClubId == entity.ClubId)
                 .Select(c => (string?)c.Name)
@@ -187,6 +197,18 @@ namespace UniMeetApi.Controllers
                 return BadRequest("Kontenjan en az 1 olmalıdır.");
             if (req.EndAt.HasValue && req.EndAt.Value < req.StartAt)
                 return BadRequest("Bitiş, başlangıçtan önce olamaz.");
+
+            var userId = GetCurrentUserId();
+            if (userId is null) return Unauthorized("Kullanıcı bilgisi alınamadı.");
+
+            var user = await _db.Users.FirstOrDefaultAsync(u => u.UserId == userId.Value);
+            if (user is null || !user.IsActive) return Unauthorized("Kullanıcı bulunamadı veya pasif.");
+
+            // ✅ Admin serbest; Manager yalnızca kendi kulübüne ait güncelleyebilir
+            var targetClubId = req.ClubId; // kulüp değişimi de denetlenir
+            if (!IsAdmin(user) && !ManagerOwnsClub(user, targetClubId))
+                return StatusCode(StatusCodes.Status403Forbidden,
+                    "Bu kulüp için etkinlik güncelleme yetkiniz yok.");
 
             e.Title = req.Title.Trim();
             e.Location = req.Location.Trim();
@@ -228,6 +250,17 @@ namespace UniMeetApi.Controllers
         {
             var e = await _db.Events.FirstOrDefaultAsync(x => x.EventId == id);
             if (e is null) return NotFound("Etkinlik bulunamadı.");
+
+            var userId = GetCurrentUserId();
+            if (userId is null) return Unauthorized("Kullanıcı bilgisi alınamadı.");
+
+            var user = await _db.Users.FirstOrDefaultAsync(u => u.UserId == userId.Value);
+            if (user is null || !user.IsActive) return Unauthorized("Kullanıcı bulunamadı veya pasif.");
+
+            // ✅ Admin serbest; Manager yalnızca kendi kulübüne ait iptal edebilir
+            if (!IsAdmin(user) && !ManagerOwnsClub(user, e.ClubId))
+                return StatusCode(StatusCodes.Status403Forbidden,
+                    "Bu kulüp için etkinlik iptal yetkiniz yok.");
 
             e.IsCancelled = true;
             await _db.SaveChangesAsync();

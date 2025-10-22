@@ -28,5 +28,8 @@ namespace UniMeetApi
         public UserRole Role { get; set; } = UserRole.Member;
 
         public bool IsActive { get; set; } = true;
+
+        // ✅ Sadece Manager’lar için doldurulacak: yönettiği kulübün ID’si
+        public int? ManagedClubId { get; set; }
     }
 }
