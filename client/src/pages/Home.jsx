@@ -96,7 +96,7 @@ export default function Home() {
                     </Typography>
                     {e.clubName && (
                       <Typography sx={{ mt: 1 }} color="primary">
-                        {e.clubName} Kulübü
+                        {e.clubName}
                       </Typography>
                     )}
                   </CardContent>
@@ -125,7 +125,7 @@ export default function Home() {
           ) : detail ? (
             <Stack spacing={1.5}>
               {detail.clubName && (
-                <Chip label={`${detail.clubName} Kulübü`} color="primary" variant="outlined" />
+                <Chip label={`${detail.clubName}`} color="primary" variant="outlined" />
               )}
 
               <Divider />
