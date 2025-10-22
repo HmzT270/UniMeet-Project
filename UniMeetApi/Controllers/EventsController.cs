@@ -1,5 +1,4 @@
 using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Http;              // <-- StatusCodes için
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
@@ -139,10 +138,9 @@ namespace UniMeetApi.Controllers
             var user = await _db.Users.FirstOrDefaultAsync(u => u.UserId == userId.Value);
             if (user is null || !user.IsActive) return Unauthorized("Kullanıcı bulunamadı veya pasif.");
 
-            // ✅ Admin serbest; Manager yalnızca kendi kulübü için
+            // ✅ KURAL: Admin serbest; Manager sadece kendi kulübü için
             if (!IsAdmin(user) && !ManagerOwnsClub(user, req.ClubId))
-                return StatusCode(StatusCodes.Status403Forbidden,
-                    "Bu kulüp için etkinlik oluşturma yetkiniz yok.");
+                return Forbid($"Yalnızca yöneticisi olduğunuz kulüp için etkinlik oluşturabilirsiniz. (Sizin kulübünüz: {user.ManagedClubId?.ToString() ?? "tanımsız"})");
 
             var entity = new Event
             {
@@ -204,11 +202,10 @@ namespace UniMeetApi.Controllers
             var user = await _db.Users.FirstOrDefaultAsync(u => u.UserId == userId.Value);
             if (user is null || !user.IsActive) return Unauthorized("Kullanıcı bulunamadı veya pasif.");
 
-            // ✅ Admin serbest; Manager yalnızca kendi kulübüne ait güncelleyebilir
-            var targetClubId = req.ClubId; // kulüp değişimi de denetlenir
+            // ✅ KURAL: Admin serbest; Manager sadece KENDİ kulübüne ait etkinliği güncelleyebilir
+            var targetClubId = req.ClubId; // kulübü değiştirmeye de izin veriyorsak bu değer önemli
             if (!IsAdmin(user) && !ManagerOwnsClub(user, targetClubId))
-                return StatusCode(StatusCodes.Status403Forbidden,
-                    "Bu kulüp için etkinlik güncelleme yetkiniz yok.");
+                return Forbid("Yalnızca yöneticisi olduğunuz kulüp için güncelleme yapabilirsiniz.");
 
             e.Title = req.Title.Trim();
             e.Location = req.Location.Trim();
@@ -257,10 +254,9 @@ namespace UniMeetApi.Controllers
             var user = await _db.Users.FirstOrDefaultAsync(u => u.UserId == userId.Value);
             if (user is null || !user.IsActive) return Unauthorized("Kullanıcı bulunamadı veya pasif.");
 
-            // ✅ Admin serbest; Manager yalnızca kendi kulübüne ait iptal edebilir
+            // ✅ KURAL: Admin serbest; Manager sadece KENDİ kulübüne ait etkinliği iptal edebilir
             if (!IsAdmin(user) && !ManagerOwnsClub(user, e.ClubId))
-                return StatusCode(StatusCodes.Status403Forbidden,
-                    "Bu kulüp için etkinlik iptal yetkiniz yok.");
+                return Forbid("Yalnızca yöneticisi olduğunuz kulüp için iptal işlemi yapabilirsiniz.");
 
             e.IsCancelled = true;
             await _db.SaveChangesAsync();

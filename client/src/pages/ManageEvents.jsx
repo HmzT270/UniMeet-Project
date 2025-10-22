@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import {
   AppBar, Toolbar, Typography, Container, Paper, Stack,
   TextField, Button, Snackbar, Alert, Box, FormControl,
@@ -10,7 +10,16 @@ import { api } from "../api/index";
 export default function ManageEvents() {
   const navigate = useNavigate();
 
-  // Form state
+  // ---- Kullanıcı bilgisi (role & managedClubId) ----
+  const user = useMemo(() => {
+    try { return JSON.parse(localStorage.getItem("user") || "{}"); } catch { return {}; }
+  }, []);
+  const role = user?.role ?? null;
+  const managedClubId = user?.managedClubId ?? null;
+  const isManager = role === "Manager";
+  const isAdmin = role === "Admin";
+
+  // ---- Form state ----
   const [title, setTitle] = useState("");
   const [location, setLocation] = useState("");
   const [eventDate, setEventDate] = useState(""); // YYYY-MM-DD
@@ -19,31 +28,72 @@ export default function ManageEvents() {
   const [clubId, setClubId] = useState("");
   const [description, setDescription] = useState("");
 
-  // UI state
+  // ---- UI state ----
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [okOpen, setOkOpen] = useState(false);
 
-  // Kulüp listesi
+  // ---- Kulüp listesi ----
   const [clubs, setClubs] = useState([]);
   const [clubsLoading, setClubsLoading] = useState(true);
 
-  // Kulüpleri yükle
+  // --- Helpers (bugünün tarih/saat stringleri) ---
+  const pad = (n) => String(n).padStart(2, "0");
+
+  const todayStr = useMemo(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  }, []);
+  const nowTimeStr = useMemo(() => {
+    const d = new Date();
+    return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }, []);
+
+  // Dinamik min değerleri
+  const dateMin = todayStr;
+  const timeMin = eventDate === todayStr ? nowTimeStr : undefined;
+
+  // ---- Kulüpleri yükle (Manager ise tek kulübe indir, Select kilitli) ----
   useEffect(() => {
     let ignore = false;
     setClubsLoading(true);
+
     api.get("/api/Clubs")
       .then(res => {
         if (ignore) return;
-        setClubs(Array.isArray(res.data) ? res.data : []);
+        const list = Array.isArray(res.data) ? res.data : [];
+
+        if (isManager && managedClubId) {
+          const onlyMine = list.filter(c => c.clubId === managedClubId);
+          setClubs(onlyMine);
+          if (onlyMine.length > 0) setClubId(String(onlyMine[0].clubId));
+        } else {
+          // Admin (ve ileride başka roller) tüm kulüpleri görür
+          setClubs(list);
+        }
       })
       .catch(err => {
         console.error("Clubs fetch error:", err);
         setClubs([]);
       })
-      .finally(() => !ignore && setClubsLoading(false));
+      .finally(() => { if (!ignore) setClubsLoading(false); });
+
     return () => { ignore = true; };
-  }, []);
+  }, [isManager, managedClubId]);
+
+  // Tarih + saat -> ISO (yerel saatten)
+  const toIsoFromDateTime = (dateStr, timeStr) => {
+    if (!dateStr || !timeStr) return null;
+    const d = new Date(`${dateStr}T${timeStr}`);
+    return isNaN(d.getTime()) ? null : d.toISOString();
+  };
+
+  // Geçmiş kontrolü (seçilen datetime şimdiden küçük olamaz)
+  const isPastDateTime = (dateStr, timeStr) => {
+    if (!dateStr || !timeStr) return false;
+    const selected = new Date(`${dateStr}T${timeStr}`);
+    return selected.getTime() < Date.now();
+  };
 
   // Doğrulama
   const validate = () => {
@@ -51,29 +101,24 @@ export default function ManageEvents() {
     if (!location.trim()) return "Etkinlik yeri zorunludur.";
     if (!eventDate) return "Etkinlik tarihi zorunludur.";
     if (!eventTime) return "Etkinlik saati zorunludur.";
+    if (isPastDateTime(eventDate, eventTime))
+      return "Geçmiş tarih/saat seçilemez. Lütfen bugünden sonraki bir zamanı seçin.";
     if (!quota || isNaN(Number(quota)) || Number(quota) <= 0)
       return "Kontenjan pozitif bir sayı olmalıdır.";
     if (!clubId) return "Lütfen bir kulüp seçin.";
+    // UI güvenliği: Manager farklı kulüp seçmeye kalkarsa engelle
+    if (isManager && managedClubId && parseInt(clubId, 10) !== managedClubId)
+      return "Sadece yöneticisi olduğunuz kulüp için etkinlik oluşturabilirsiniz.";
     return "";
   };
 
   const hasErrors = !!validate();
 
-  // Tarih + saat -> ISO (yerel saatten)
-  const toIsoFromDateTime = (dateStr, timeStr) => {
-    const combined = `${dateStr}T${timeStr}`;
-    const d = new Date(combined);
-    if (isNaN(d.getTime())) return null;
-    return d.toISOString();
-  };
-
   const handleSubmit = async () => {
     setError("");
     const v = validate();
-    if (v) {
-      setError(v);
-      return;
-    }
+    if (v) { setError(v); return; }
+
     setSubmitting(true);
     try {
       const payload = {
@@ -88,18 +133,12 @@ export default function ManageEvents() {
 
       await api.post("/api/Events", payload);
 
-      // Başarılı -> anasayfaya dön ve listede gör
       setOkOpen(true);
-      navigate("/home");
+      navigate("/home"); // başarıdan sonra ana sayfa
 
-      // (navigate öncesi form temizliği istersen)
-      setTitle("");
-      setLocation("");
-      setEventDate("");
-      setEventTime("");
-      setQuota("");
-      setClubId("");
-      setDescription("");
+      // (Opsiyonel) form temizliği
+      setTitle(""); setLocation(""); setEventDate(""); setEventTime("");
+      setQuota(""); setClubId(""); setDescription("");
     } catch (e) {
       const msg = e?.response?.data || "Etkinlik oluşturulamadı.";
       setError(typeof msg === "string" ? msg : "Etkinlik oluşturulamadı.");
@@ -113,7 +152,7 @@ export default function ManageEvents() {
       <AppBar position="static" color="default" elevation={1}>
         <Toolbar>
           <Typography variant="h6" sx={{ flexGrow: 1 }}>UniMeet — Etkinlik Oluştur</Typography>
-          <Button onClick={() => navigate("/home")}>Ana Sayfa</Button>
+        <Button onClick={() => navigate("/home")}>Ana Sayfa</Button>
         </Toolbar>
       </AppBar>
 
@@ -124,19 +163,9 @@ export default function ManageEvents() {
           <Stack spacing={2}>
             {error && <Alert severity="error">{error}</Alert>}
 
-            <TextField
-              label="Etkinlik Adı"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              required
-            />
+            <TextField label="Etkinlik Adı" value={title} onChange={(e) => setTitle(e.target.value)} required />
 
-            <TextField
-              label="Yer"
-              value={location}
-              onChange={(e) => setLocation(e.target.value)}
-              required
-            />
+            <TextField label="Yer" value={location} onChange={(e) => setLocation(e.target.value)} required />
 
             <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" }, gap: 2 }}>
               <TextField
@@ -145,6 +174,7 @@ export default function ManageEvents() {
                 value={eventDate}
                 onChange={(e) => setEventDate(e.target.value)}
                 InputLabelProps={{ shrink: true }}
+                inputProps={{ min: dateMin }}     // geçmiş günleri engelle
                 required
               />
               <TextField
@@ -153,6 +183,7 @@ export default function ManageEvents() {
                 value={eventTime}
                 onChange={(e) => setEventTime(e.target.value)}
                 InputLabelProps={{ shrink: true }}
+                inputProps={timeMin ? { min: timeMin } : {}} // bugünse geçmiş saatleri engelle
                 required
               />
             </Box>
@@ -173,7 +204,8 @@ export default function ManageEvents() {
                 label="Kulüp"
                 value={clubId}
                 onChange={(e) => setClubId(e.target.value)}
-                disabled={clubsLoading}
+                // Manager’da sadece kendi kulübü görünecek ve seçim kilitli olacak
+                disabled={clubsLoading || (isManager && !!managedClubId)}
               >
                 {clubs.map((c) => (
                   <MenuItem key={c.clubId} value={String(c.clubId)}>

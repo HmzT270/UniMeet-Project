@@ -32,22 +32,22 @@ export default function Login() {
     try {
       setLoading(true);
 
-      // ÖNEMLİ: baseURL yalnızca host+port, endpoint mutlaka /api ile başlasın
+      // baseURL yalnızca host+port; endpoint mutlaka /api ile başlasın
       const { data } = await api.post("/api/Auth/login", {
         email: normalizedEmail,
-        password,
+        password: password.trim(),
       });
 
-      // Backend dönen örnek: { userId, email, fullName, role, token }
+      // Beklenen alanlar: userId, email, fullName, role, managedClubId, token
       if (!data?.token) {
         setErr("Giriş başarılı görünüyor ama token gelmedi.");
         return;
       }
 
-      // Frontend’in rol/buton kontrolü için 'token' anahtarını kaydediyoruz
+      // Token'ı sakla (auth header için)
       localStorage.setItem("token", data.token);
 
-      // (Opsiyonel) kullanıcı bilgisini saklamak istersen:
+      // Kullanıcı bilgisini sakla — managedClubId dahil
       localStorage.setItem(
         "user",
         JSON.stringify({
@@ -55,6 +55,7 @@ export default function Login() {
           email: data.email,
           fullName: data.fullName,
           role: data.role,
+          managedClubId: data.managedClubId ?? null,
         })
       );
 
@@ -85,6 +86,7 @@ export default function Login() {
               ? "E-posta formatı: 12 haneli öğrenci no + @dogus.edu.tr (örn. 202203011029@dogus.edu.tr)"
               : ""
           }
+          onKeyDown={(e) => e.key === "Enter" && submit()}
         />
 
         <TextField
@@ -92,6 +94,7 @@ export default function Login() {
           type="password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && submit()}
         />
 
         <Button variant="contained" onClick={submit} disabled={loading}>
