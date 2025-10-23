@@ -1,30 +1,81 @@
 import {
-  AppBar, Toolbar, Typography, Button, Container, Box, Card, CardContent, Stack,
-  Dialog, DialogTitle, DialogContent, DialogActions, Chip, Divider, CircularProgress, Alert
+  AppBar,
+  Toolbar,
+  Typography,
+  Button,
+  Container,
+  Box,
+  Card,
+  CardContent,
+  Stack,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Chip,
+  Divider,
+  CircularProgress,
+  Alert,
+  TextField
 } from "@mui/material";
 import { 
   LocationOn, AccessTime, Event, Group, Description, 
   EmojiEvents, Celebration, CalendarMonth 
 } from "@mui/icons-material";
 import { useNavigate } from "react-router-dom";
-import { useEffect, useState } from "react";
-import { getUserRole } from "../auth/token";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "../api/index";
 
 export default function Home() {
   const navigate = useNavigate();
-  const [role, setRole] = useState(null);
+
+  // Kullanıcı bilgisi
+  const user = useMemo(() => {
+    try { return JSON.parse(localStorage.getItem("user") || "{}"); } catch { return {}; }
+  }, []);
+  const role = user?.role ?? null;
+  const managedClubId = user?.managedClubId ?? null;
+  const isManager = role === "Manager";
+  const isAdmin = role === "Admin";
+
   const [events, setEvents] = useState([]);
 
-  // Dialog state
+  // Detay dialog state
   const [detailOpen, setDetailOpen] = useState(false);
   const [detail, setDetail] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailErr, setDetailErr] = useState("");
+  const [notFound, setNotFound] = useState(false); // sadece 404’te true
 
-  useEffect(() => {
-    setRole(getUserRole());
+  // Edit modu state
+  const [editMode, setEditMode] = useState(false);
+  const [editSaving, setEditSaving] = useState(false);
+  const [editErr, setEditErr] = useState("");
+
+  // Delete state
+  const [deleteAsk, setDeleteAsk] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteErr, setDeleteErr] = useState("");
+
+  // Edit form alanları
+  const [title, setTitle] = useState("");
+  const [location, setLocation] = useState("");
+  const [eventDate, setEventDate] = useState(""); // YYYY-MM-DD
+  const [eventTime, setEventTime] = useState(""); // HH:mm
+  const [quota, setQuota] = useState("");
+  const [description, setDescription] = useState("");
+
+  // Min tarih/saat
+  const pad = (n) => String(n).padStart(2, "0");
+  const todayStr = useMemo(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   }, []);
+  const nowTimeStr = useMemo(() => {
+    const d = new Date();
+    return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }, []);
+  const timeMin = eventDate === todayStr ? nowTimeStr : undefined;
 
   useEffect(() => {
     (async () => {
@@ -37,30 +88,158 @@ export default function Home() {
     })();
   }, []);
 
-  const isManager = role === "Manager" || role === "Admin";
+  const fmt = (iso) => (iso ? new Date(iso).toLocaleString("tr-TR") : "-");
+
+  const refreshList = async () => {
+    try {
+      const { data } = await api.get("/api/Events");
+      setEvents(data ?? []);
+    } catch {
+      // ignore
+    }
+  };
 
   const openDetail = async (id) => {
-    setDetailOpen(true);
-    setDetail(null);
-    setDetailErr("");
+    // ÖNCE loading’i aç, sonra dialog’u göster ⇒ flicker yok
     setDetailLoading(true);
+    setDetailErr("");
+    setNotFound(false);
+    setEditMode(false);
+    setDeleteAsk(false);
+    setDetailOpen(true);
+
     try {
       const { data } = await api.get(`/api/Events/${id}`);
       setDetail(data);
+      // edit formu doldur
+      if (data?.startAt) {
+        const d = new Date(data.startAt);
+        setEventDate(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`);
+        setEventTime(`${pad(d.getHours())}:${pad(d.getMinutes())}`);
+      } else {
+        setEventDate("");
+        setEventTime("");
+      }
+      setTitle(data?.title ?? "");
+      setLocation(data?.location ?? "");
+      setQuota(String(data?.quota ?? ""));
+      setDescription(data?.description ?? "");
     } catch (e) {
-      setDetailErr(e?.response?.data || "Etkinlik detayı yüklenemedi.");
+      const status = e?.response?.status;
+      if (status === 404) {
+        setNotFound(true); // sadece gerçek 404’te uyarı göster
+      } else {
+        setDetailErr(e?.response?.data || "Etkinlik detayı yüklenemedi.");
+      }
+      setDetail(null);
     } finally {
       setDetailLoading(false);
     }
   };
 
-  const closeDetail = () => {
-    setDetailOpen(false);
+  const resetDetailState = () => {
     setDetail(null);
     setDetailErr("");
+    setNotFound(false);
+    setEditMode(false);
+    setEditErr("");
+    setDeleteAsk(false);
+    setDeleteErr("");
+    setEventDate("");
+    setEventTime("");
+    setTitle("");
+    setLocation("");
+    setQuota("");
+    setDescription("");
   };
 
-  const fmt = (iso) => (iso ? new Date(iso).toLocaleString("tr-TR") : "-");
+  const closeDetail = () => {
+    setDetailOpen(false);
+    // Dialog kapanma animasyonundan sonra state’i temizle (flicker olmasın)
+    setTimeout(resetDetailState, 200);
+  };
+
+  const canEditOrDelete = !!detail && (isAdmin || (isManager && managedClubId === detail.clubId));
+
+  // Edit doğrulama ve kaydet
+  const isPastDateTime = (dateStr, timeStr) => {
+    if (!dateStr || !timeStr) return false;
+    const selected = new Date(`${dateStr}T${timeStr}`);
+    return selected.getTime() < Date.now();
+  };
+  const toIsoFromDateTime = (dateStr, timeStr) => {
+    if (!dateStr || !timeStr) return null;
+    const d = new Date(`${dateStr}T${timeStr}`);
+    return isNaN(d.getTime()) ? null : d.toISOString();
+  };
+
+  const validateEdit = () => {
+    if (!title.trim()) return "Etkinlik adı zorunludur.";
+    if (!location.trim()) return "Etkinlik yeri zorunludur.";
+    if (!eventDate) return "Etkinlik tarihi zorunludur.";
+    if (!eventTime) return "Etkinlik saati zorunludur.";
+    if (isPastDateTime(eventDate, eventTime))
+      return "Geçmiş tarih/saat seçilemez.";
+    if (!quota || isNaN(Number(quota)) || Number(quota) <= 0)
+      return "Kontenjan pozitif bir sayı olmalıdır.";
+    return "";
+  };
+
+  const saveEdit = async () => {
+    const v = validateEdit();
+    if (v) {
+      setEditErr(v);
+      return;
+    }
+    setEditErr("");
+    setEditSaving(true);
+    try {
+      await api.put(`/api/Events/${detail.eventId}`, {
+        title: title.trim(),
+        location: location.trim(),
+        startAt: toIsoFromDateTime(eventDate, eventTime),
+        endAt: null,
+        quota: Number(quota),
+        clubId: detail.clubId, // kulüp değişikliği yok
+        description: description.trim() || null,
+        isCancelled: detail.isCancelled ?? false
+      });
+
+      // Liste + detay tazele
+      const [listRes, detailRes] = await Promise.all([
+        api.get("/api/Events"),
+        api.get(`/api/Events/${detail.eventId}`)
+      ]);
+      setEvents(listRes.data ?? []);
+      setDetail(detailRes.data ?? null);
+      setEditMode(false);
+    } catch (e) {
+      setEditErr(e?.response?.data || "Kaydedilemedi.");
+    } finally {
+      setEditSaving(false);
+    }
+  };
+
+  // Sil (soft-delete / iptal)
+  const confirmDelete = () => {
+    setDeleteAsk(true);
+    setDeleteErr("");
+  };
+
+  const doDelete = async () => {
+    if (!detail) return;
+    setDeleting(true);
+    setDeleteErr("");
+    try {
+      await api.delete(`/api/Events/${detail.eventId}`);
+      await refreshList();
+      closeDetail(); // kapat ve listeden düşmüş olacak
+    } catch (e) {
+      setDeleteErr(e?.response?.data || "Silme işlemi başarısız oldu.");
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   return (
     <Box
@@ -103,7 +282,7 @@ export default function Home() {
             <span style={{ color: '#e9d5ff' }}>Meet</span>
           </Typography>
 
-          {isManager && (
+          {(isAdmin || isManager) && (
             <Button 
               variant="contained" 
               onClick={() => navigate("/manageevents")}
@@ -166,7 +345,7 @@ export default function Home() {
                 ml: 0.5,
               }}
             >
-              Buradan kulüp etkinliklerini keşfedebilir ve detaylarına göz atabilirsin.
+              Buradan kulüp etkinliklerini görüntüleyebilir, yetkin varsa düzenleyebilir veya silebilirsin.
             </Typography>
           </Box>
 
@@ -309,7 +488,7 @@ export default function Home() {
         </Box>
       </Container>
 
-      {/* Detay Dialog - Mor Themed */}
+      {/* Detay + Düzenle + Sil Dialog - Mor Themed */}
       <Dialog 
         open={detailOpen} 
         onClose={closeDetail} 
@@ -329,6 +508,9 @@ export default function Home() {
             fontWeight: 700,
             fontSize: '1.3rem',
             py: 2.5,
+            display: "flex",
+            alignItems: "center",
+            gap: 1,
           }}
         >
           {detail?.title ?? "Etkinlik Detayı"}
@@ -351,92 +533,180 @@ export default function Home() {
             </Box>
           ) : detailErr ? (
             <Alert severity="error">{String(detailErr)}</Alert>
+          ) : notFound ? (
+            <Alert severity="warning">Etkinlik bulunamadı.</Alert>
           ) : detail ? (
-            <Stack spacing={2}>
-              {detail.clubName && (
-                <Chip 
-                  label={detail.clubName}
-                  icon={<Group />}
-                  sx={{
-                    backgroundColor: '#f3e8ff',
-                    color: '#6b21a8',
-                    fontWeight: 600,
-                    fontSize: '0.95rem',
-                    py: 2.5,
-                    border: '1px solid #e9d5ff',
-                    '& .MuiChip-icon': {
+            editMode ? (
+              <>
+                {editErr && <Alert severity="error" sx={{ mb: 2 }}>{editErr}</Alert>}
+                <Stack spacing={2}>
+                  <TextField 
+                    label="Etkinlik Adı" 
+                    value={title} 
+                    onChange={(e) => setTitle(e.target.value)}
+                    fullWidth
+                    sx={{ '& .MuiOutlinedInput-root': { '&:hover fieldset': { borderColor: '#8b5cf6' }, '&.Mui-focused fieldset': { borderColor: '#6b21a8' } } }}
+                  />
+                  <TextField 
+                    label="Yer" 
+                    value={location} 
+                    onChange={(e) => setLocation(e.target.value)}
+                    fullWidth
+                    sx={{ '& .MuiOutlinedInput-root': { '&:hover fieldset': { borderColor: '#8b5cf6' }, '&.Mui-focused fieldset': { borderColor: '#6b21a8' } } }}
+                  />
+                  <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" }, gap: 2 }}>
+                    <TextField
+                      label="Tarih"
+                      type="date"
+                      value={eventDate}
+                      onChange={(e) => setEventDate(e.target.value)}
+                      InputLabelProps={{ shrink: true }}
+                      inputProps={{ min: todayStr }}
+                      fullWidth
+                      sx={{ '& .MuiOutlinedInput-root': { '&:hover fieldset': { borderColor: '#8b5cf6' }, '&.Mui-focused fieldset': { borderColor: '#6b21a8' } } }}
+                    />
+                    <TextField
+                      label="Saat"
+                      type="time"
+                      value={eventTime}
+                      onChange={(e) => setEventTime(e.target.value)}
+                      InputLabelProps={{ shrink: true }}
+                      inputProps={timeMin ? { min: timeMin } : {}}
+                      fullWidth
+                      sx={{ '& .MuiOutlinedInput-root': { '&:hover fieldset': { borderColor: '#8b5cf6' }, '&.Mui-focused fieldset': { borderColor: '#6b21a8' } } }}
+                    />
+                  </Box>
+                  <TextField
+                    label="Kontenjan"
+                    type="number"
+                    inputProps={{ min: 1 }}
+                    value={quota}
+                    onChange={(e) => setQuota(e.target.value)}
+                    fullWidth
+                    sx={{ '& .MuiOutlinedInput-root': { '&:hover fieldset': { borderColor: '#8b5cf6' }, '&.Mui-focused fieldset': { borderColor: '#6b21a8' } } }}
+                  />
+                  <TextField
+                    label="Açıklama"
+                    multiline
+                    minRows={4}
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    fullWidth
+                    sx={{ '& .MuiOutlinedInput-root': { '&:hover fieldset': { borderColor: '#8b5cf6' }, '&.Mui-focused fieldset': { borderColor: '#6b21a8' } } }}
+                  />
+                </Stack>
+              </>
+            ) : (
+              <Stack spacing={2}>
+                {detail.clubName && (
+                  <Chip 
+                    label={detail.clubName}
+                    icon={<Group />}
+                    sx={{
+                      backgroundColor: '#f3e8ff',
                       color: '#6b21a8',
-                    },
-                  }}
-                />
-              )}
+                      fontWeight: 600,
+                      fontSize: '0.95rem',
+                      py: 2.5,
+                      border: '1px solid #e9d5ff',
+                      '& .MuiChip-icon': {
+                        color: '#6b21a8',
+                      },
+                    }}
+                  />
+                )}
 
-              <Divider sx={{ borderColor: '#e9d5ff' }} />
+                <Divider sx={{ borderColor: '#e9d5ff' }} />
 
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                <LocationOn sx={{ color: '#6b21a8', fontSize: '1.4rem' }} />
-                <Typography sx={{ fontSize: '1rem', fontWeight: 500 }}>
-                  <strong style={{ color: '#6b21a8' }}>Yer:</strong> {detail.location}
-                </Typography>
-              </Box>
-              
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                <AccessTime sx={{ color: '#6b21a8', fontSize: '1.4rem' }} />
-                <Typography sx={{ fontSize: '1rem', fontWeight: 500 }}>
-                  <strong style={{ color: '#6b21a8' }}>Başlangıç:</strong> {fmt(detail.startAt)}
-                </Typography>
-              </Box>
-
-              {detail.endAt && (
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                  <Event sx={{ color: '#6b21a8', fontSize: '1.4rem' }} />
+                  <LocationOn sx={{ color: '#6b21a8', fontSize: '1.4rem' }} />
                   <Typography sx={{ fontSize: '1rem', fontWeight: 500 }}>
-                    <strong style={{ color: '#6b21a8' }}>Bitiş:</strong> {fmt(detail.endAt)}
+                    <strong style={{ color: '#6b21a8' }}>Yer:</strong> {detail.location}
                   </Typography>
                 </Box>
-              )}
-              
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                <Group sx={{ color: '#6b21a8', fontSize: '1.4rem' }} />
-                <Typography sx={{ fontSize: '1rem', fontWeight: 500 }}>
-                  <strong style={{ color: '#6b21a8' }}>Kontenjan:</strong> {detail.quota}
-                </Typography>
-              </Box>
+                
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                  <AccessTime sx={{ color: '#6b21a8', fontSize: '1.4rem' }} />
+                  <Typography sx={{ fontSize: '1rem', fontWeight: 500 }}>
+                    <strong style={{ color: '#6b21a8' }}>Başlangıç:</strong> {fmt(detail.startAt)}
+                  </Typography>
+                </Box>
 
-              {detail.description && (
-                <>
-                  <Divider sx={{ borderColor: '#e9d5ff', mt: 1 }} />
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-                    <Description sx={{ color: '#6b21a8', fontSize: '1.4rem' }} />
-                    <Typography 
-                      variant="subtitle1" 
-                      sx={{ 
-                        fontWeight: 700,
-                        color: '#6b21a8',
-                      }}
-                    >
-                      Açıklama
+                {detail.endAt && (
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                    <Event sx={{ color: '#6b21a8', fontSize: '1.4rem' }} />
+                    <Typography sx={{ fontSize: '1rem', fontWeight: 500 }}>
+                      <strong style={{ color: '#6b21a8' }}>Bitiş:</strong> {fmt(detail.endAt)}
                     </Typography>
                   </Box>
-                  <Typography 
-                    sx={{ 
-                      whiteSpace: "pre-wrap",
-                      color: '#64748b',
-                      lineHeight: 1.7,
-                      fontSize: '0.95rem',
-                      pl: 5,
-                    }}
-                  >
-                    {detail.description}
+                )}
+                
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                  <Group sx={{ color: '#6b21a8', fontSize: '1.4rem' }} />
+                  <Typography sx={{ fontSize: '1rem', fontWeight: 500 }}>
+                    <strong style={{ color: '#6b21a8' }}>Kontenjan:</strong> {detail.quota}
                   </Typography>
-                </>
-              )}
-            </Stack>
-          ) : (
-            <Typography>Etkinlik bulunamadı.</Typography>
-          )}
+                </Box>
+
+                {detail.description && (
+                  <>
+                    <Divider sx={{ borderColor: '#e9d5ff', mt: 1 }} />
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+                      <Description sx={{ color: '#6b21a8', fontSize: '1.4rem' }} />
+                      <Typography 
+                        variant="subtitle1" 
+                        sx={{ 
+                          fontWeight: 700,
+                          color: '#6b21a8',
+                        }}
+                      >
+                        Açıklama
+                      </Typography>
+                    </Box>
+                    <Typography 
+                      sx={{ 
+                        whiteSpace: "pre-wrap",
+                        color: '#64748b',
+                        lineHeight: 1.7,
+                        fontSize: '0.95rem',
+                        pl: 5,
+                      }}
+                    >
+                      {detail.description}
+                    </Typography>
+                  </>
+                )}
+                {deleteErr && <Alert severity="error">{deleteErr}</Alert>}
+              </Stack>
+            )
+          ) : null}
         </DialogContent>
         <DialogActions sx={{ p: 2.5 }}>
+          {detail && (isAdmin || (isManager && managedClubId === detail.clubId)) && !detailLoading && !detailErr && !editMode && (
+            <>
+              {deleteAsk ? (
+                <>
+                  <Button onClick={() => setDeleteAsk(false)} disabled={deleting} sx={{ color: '#6b21a8', fontWeight: 600 }}>Vazgeç</Button>
+                  <Button color="error" variant="contained" onClick={doDelete} disabled={deleting} sx={{ fontWeight: 600 }}>
+                    {deleting ? "Siliniyor..." : "Sil"}
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <Button color="error" onClick={confirmDelete} sx={{ fontWeight: 600 }}>Sil</Button>
+                  <Button variant="outlined" onClick={() => setEditMode(true)} sx={{ color: '#6b21a8', borderColor: '#e9d5ff', fontWeight: 600, '&:hover': { borderColor: '#c084fc', bgcolor: '#faf5ff' } }}>Düzenle</Button>
+                </>
+              )}
+            </>
+          )}
+          {editMode && (
+            <>
+              <Button onClick={() => setEditMode(false)} disabled={editSaving} sx={{ color: '#6b21a8', fontWeight: 600 }}>Vazgeç</Button>
+              <Button variant="contained" onClick={saveEdit} disabled={editSaving} sx={{ bgcolor: '#6b21a8', fontWeight: 600, '&:hover': { bgcolor: '#581c87' } }}>
+                {editSaving ? "Kaydediliyor..." : "Kaydet"}
+              </Button>
+            </>
+          )}
           <Button 
             onClick={closeDetail}
             sx={{

@@ -73,7 +73,7 @@ export default function ManageEvents() {
         }
       })
       .catch(err => {
-        console.error("Clubs fetch error:", err);
+        // Kulüpler yüklenemedi - sessizce devam et
         setClubs([]);
       })
       .finally(() => { if (!ignore) setClubsLoading(false); });

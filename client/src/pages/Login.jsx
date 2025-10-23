@@ -55,6 +55,7 @@ export default function Login() {
           email: data.email,
           fullName: data.fullName,
           role: data.role,
+          managedClubId: data.managedClubId, // ✅ Manager için gerekli
         })
       );
 
