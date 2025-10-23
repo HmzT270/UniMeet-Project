@@ -24,6 +24,8 @@ export default function ManageEvents() {
   const [location, setLocation] = useState("");
   const [eventDate, setEventDate] = useState(""); // YYYY-MM-DD
   const [eventTime, setEventTime] = useState(""); // HH:mm
+  const [endDate, setEndDate] = useState(""); // YYYY-MM-DD
+  const [endTime, setEndTime] = useState(""); // HH:mm
   const [quota, setQuota] = useState("");
   const [clubId, setClubId] = useState("");
   const [description, setDescription] = useState("");
@@ -52,6 +54,9 @@ export default function ManageEvents() {
   // Dinamik min değerleri
   const dateMin = todayStr;
   const timeMin = eventDate === todayStr ? nowTimeStr : undefined;
+  
+  const endDateMin = eventDate || todayStr;
+  const endTimeMin = endDate === eventDate ? eventTime : undefined;
 
   // ---- Kulüpleri yükle (Manager ise tek kulübe indir, Select kilitli) ----
   useEffect(() => {
@@ -81,11 +86,11 @@ export default function ManageEvents() {
     return () => { ignore = true; };
   }, [isManager, managedClubId]);
 
-  // Tarih + saat -> ISO (yerel saatten)
+  // Tarih + saat -> ISO (yerel saatten, timezone kaydırması olmadan)
   const toIsoFromDateTime = (dateStr, timeStr) => {
     if (!dateStr || !timeStr) return null;
-    const d = new Date(`${dateStr}T${timeStr}`);
-    return isNaN(d.getTime()) ? null : d.toISOString();
+    // Yerel saat diliminde string oluştur (timezone shift olmasın)
+    return `${dateStr}T${timeStr}:00`;
   };
 
   // Geçmiş kontrolü (seçilen datetime şimdiden küçük olamaz)
@@ -103,6 +108,15 @@ export default function ManageEvents() {
     if (!eventTime) return "Etkinlik saati zorunludur.";
     if (isPastDateTime(eventDate, eventTime))
       return "Geçmiş tarih/saat seçilemez. Lütfen bugünden sonraki bir zamanı seçin.";
+    if (!endDate) return "Bitiş tarihi zorunludur.";
+    if (!endTime) return "Bitiş saati zorunludur.";
+    
+    // Bitiş tarihi kontrolü
+    const start = new Date(`${eventDate}T${eventTime}`);
+    const end = new Date(`${endDate}T${endTime}`);
+    if (end.getTime() <= start.getTime())
+      return "Bitiş tarihi ve saati, başlangıç tarihinden sonra olmalıdır.";
+    
     if (!quota || isNaN(Number(quota)) || Number(quota) <= 0)
       return "Kontenjan pozitif bir sayı olmalıdır.";
     if (!clubId) return "Lütfen bir kulüp seçin.";
@@ -124,8 +138,8 @@ export default function ManageEvents() {
       const payload = {
         title: title.trim(),
         location: location.trim(),
-        startAt: toIsoFromDateTime(eventDate, eventTime), // sadece başlangıç
-        endAt: null,                                      // backend tolere eder
+        startAt: toIsoFromDateTime(eventDate, eventTime),
+        endAt: toIsoFromDateTime(endDate, endTime),
         quota: Number(quota),
         clubId: parseInt(clubId, 10),
         description: description.trim() || null,
@@ -138,6 +152,7 @@ export default function ManageEvents() {
 
       // (Opsiyonel) form temizliği
       setTitle(""); setLocation(""); setEventDate(""); setEventTime("");
+      setEndDate(""); setEndTime("");
       setQuota(""); setClubId(""); setDescription("");
     } catch (e) {
       const msg = e?.response?.data || "Etkinlik oluşturulamadı.";
@@ -173,7 +188,7 @@ export default function ManageEvents() {
 
             <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" }, gap: 2 }}>
               <TextField
-                label="Tarih"
+                label="Başlangıç Tarihi"
                 type="date"
                 value={eventDate}
                 onChange={(e) => setEventDate(e.target.value)}
@@ -184,12 +199,37 @@ export default function ManageEvents() {
                 sx={{ '& .MuiOutlinedInput-root': { '&:hover fieldset': { borderColor: '#8b5cf6' }, '&.Mui-focused fieldset': { borderColor: '#6b21a8' } } }}
               />
               <TextField
-                label="Saat"
+                label="Başlangıç Saati"
                 type="time"
                 value={eventTime}
                 onChange={(e) => setEventTime(e.target.value)}
                 InputLabelProps={{ shrink: true }}
                 inputProps={timeMin ? { min: timeMin } : {}}
+                required
+                fullWidth
+                sx={{ '& .MuiOutlinedInput-root': { '&:hover fieldset': { borderColor: '#8b5cf6' }, '&.Mui-focused fieldset': { borderColor: '#6b21a8' } } }}
+              />
+            </Box>
+
+            <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" }, gap: 2 }}>
+              <TextField
+                label="Bitiş Tarihi"
+                type="date"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+                InputLabelProps={{ shrink: true }}
+                inputProps={{ min: endDateMin }}
+                required
+                fullWidth
+                sx={{ '& .MuiOutlinedInput-root': { '&:hover fieldset': { borderColor: '#8b5cf6' }, '&.Mui-focused fieldset': { borderColor: '#6b21a8' } } }}
+              />
+              <TextField
+                label="Bitiş Saati"
+                type="time"
+                value={endTime}
+                onChange={(e) => setEndTime(e.target.value)}
+                InputLabelProps={{ shrink: true }}
+                inputProps={endTimeMin ? { min: endTimeMin } : {}}
                 required
                 fullWidth
                 sx={{ '& .MuiOutlinedInput-root': { '&:hover fieldset': { borderColor: '#8b5cf6' }, '&.Mui-focused fieldset': { borderColor: '#6b21a8' } } }}

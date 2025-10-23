@@ -62,6 +62,8 @@ export default function Home() {
   const [location, setLocation] = useState("");
   const [eventDate, setEventDate] = useState(""); // YYYY-MM-DD
   const [eventTime, setEventTime] = useState(""); // HH:mm
+  const [endDate, setEndDate] = useState(""); // YYYY-MM-DD
+  const [endTime, setEndTime] = useState(""); // HH:mm
   const [quota, setQuota] = useState("");
   const [description, setDescription] = useState("");
 
@@ -76,6 +78,9 @@ export default function Home() {
     return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }, []);
   const timeMin = eventDate === todayStr ? nowTimeStr : undefined;
+  
+  const endDateMin = eventDate || todayStr;
+  const endTimeMin = endDate === eventDate ? eventTime : undefined;
 
   useEffect(() => {
     (async () => {
@@ -111,7 +116,7 @@ export default function Home() {
     try {
       const { data } = await api.get(`/api/Events/${id}`);
       setDetail(data);
-      // edit formu doldur
+      // edit formu doldur - başlangıç
       if (data?.startAt) {
         const d = new Date(data.startAt);
         setEventDate(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`);
@@ -119,6 +124,15 @@ export default function Home() {
       } else {
         setEventDate("");
         setEventTime("");
+      }
+      // edit formu doldur - bitiş
+      if (data?.endAt) {
+        const d = new Date(data.endAt);
+        setEndDate(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`);
+        setEndTime(`${pad(d.getHours())}:${pad(d.getMinutes())}`);
+      } else {
+        setEndDate("");
+        setEndTime("");
       }
       setTitle(data?.title ?? "");
       setLocation(data?.location ?? "");
@@ -147,6 +161,8 @@ export default function Home() {
     setDeleteErr("");
     setEventDate("");
     setEventTime("");
+    setEndDate("");
+    setEndTime("");
     setTitle("");
     setLocation("");
     setQuota("");
@@ -169,8 +185,8 @@ export default function Home() {
   };
   const toIsoFromDateTime = (dateStr, timeStr) => {
     if (!dateStr || !timeStr) return null;
-    const d = new Date(`${dateStr}T${timeStr}`);
-    return isNaN(d.getTime()) ? null : d.toISOString();
+    // Yerel saat diliminde string oluştur (timezone shift olmasın)
+    return `${dateStr}T${timeStr}:00`;
   };
 
   const validateEdit = () => {
@@ -180,6 +196,15 @@ export default function Home() {
     if (!eventTime) return "Etkinlik saati zorunludur.";
     if (isPastDateTime(eventDate, eventTime))
       return "Geçmiş tarih/saat seçilemez.";
+    if (!endDate) return "Bitiş tarihi zorunludur.";
+    if (!endTime) return "Bitiş saati zorunludur.";
+    
+    // Bitiş tarihi kontrolü
+    const start = new Date(`${eventDate}T${eventTime}`);
+    const end = new Date(`${endDate}T${endTime}`);
+    if (end.getTime() <= start.getTime())
+      return "Bitiş tarihi ve saati, başlangıç tarihinden sonra olmalıdır.";
+    
     if (!quota || isNaN(Number(quota)) || Number(quota) <= 0)
       return "Kontenjan pozitif bir sayı olmalıdır.";
     return "";
@@ -198,7 +223,7 @@ export default function Home() {
         title: title.trim(),
         location: location.trim(),
         startAt: toIsoFromDateTime(eventDate, eventTime),
-        endAt: null,
+        endAt: toIsoFromDateTime(endDate, endTime),
         quota: Number(quota),
         clubId: detail.clubId, // kulüp değişikliği yok
         description: description.trim() || null,
@@ -556,7 +581,7 @@ export default function Home() {
                   />
                   <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" }, gap: 2 }}>
                     <TextField
-                      label="Tarih"
+                      label="Başlangıç Tarihi"
                       type="date"
                       value={eventDate}
                       onChange={(e) => setEventDate(e.target.value)}
@@ -566,12 +591,34 @@ export default function Home() {
                       sx={{ '& .MuiOutlinedInput-root': { '&:hover fieldset': { borderColor: '#8b5cf6' }, '&.Mui-focused fieldset': { borderColor: '#6b21a8' } } }}
                     />
                     <TextField
-                      label="Saat"
+                      label="Başlangıç Saati"
                       type="time"
                       value={eventTime}
                       onChange={(e) => setEventTime(e.target.value)}
                       InputLabelProps={{ shrink: true }}
                       inputProps={timeMin ? { min: timeMin } : {}}
+                      fullWidth
+                      sx={{ '& .MuiOutlinedInput-root': { '&:hover fieldset': { borderColor: '#8b5cf6' }, '&.Mui-focused fieldset': { borderColor: '#6b21a8' } } }}
+                    />
+                  </Box>
+                  <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" }, gap: 2 }}>
+                    <TextField
+                      label="Bitiş Tarihi"
+                      type="date"
+                      value={endDate}
+                      onChange={(e) => setEndDate(e.target.value)}
+                      InputLabelProps={{ shrink: true }}
+                      inputProps={{ min: endDateMin }}
+                      fullWidth
+                      sx={{ '& .MuiOutlinedInput-root': { '&:hover fieldset': { borderColor: '#8b5cf6' }, '&.Mui-focused fieldset': { borderColor: '#6b21a8' } } }}
+                    />
+                    <TextField
+                      label="Bitiş Saati"
+                      type="time"
+                      value={endTime}
+                      onChange={(e) => setEndTime(e.target.value)}
+                      InputLabelProps={{ shrink: true }}
+                      inputProps={endTimeMin ? { min: endTimeMin } : {}}
                       fullWidth
                       sx={{ '& .MuiOutlinedInput-root': { '&:hover fieldset': { borderColor: '#8b5cf6' }, '&.Mui-focused fieldset': { borderColor: '#6b21a8' } } }}
                     />
